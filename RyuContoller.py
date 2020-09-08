@@ -26,15 +26,21 @@ from ryu.lib.packet import ether_types
 from ryu.lib.packet import tcp
 import pickle, threading
 import socket
+from random import randint
+import time
 
 class SimpleSwitch13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     Hostnumber = 123
-    Hostinfo ={}
+    Hostinfo =[]
     Data_Path = {}
     Flowcounter = {}
     Edgeswitch = [257,258,259,260]
     mac_to_port = {}
+    Keys= {}
+    newlocation =[]
+    prevalueSPkt={}
+    prevalueRPkt={}
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch13, self).__init__(*args, **kwargs)
         #self.mac_to_port = {}
@@ -111,11 +117,10 @@ class SimpleSwitch13(app_manager.RyuApp):
         # learn a mac address to avoid FLOOD next time.
         
         if ip and dpid in self.Edgeswitch:
-          if src in self.Hostinfo.keys():
-              self.logger.info("the user in Database %s %s %s %s", dpid, src, dst, in_port)
-              pass
+          if (dpid, src, ip.src, in_port) in self.Hostinfo:
+              print ip.src ,"is an authenticated user and its location", dpid,in_port
           else:
-             print "unuthucated user"
+             print "Unauthenticated user"
              return
         else:
             self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
@@ -134,12 +139,12 @@ class SimpleSwitch13(app_manager.RyuApp):
         if out_port != ofproto.OFPP_FLOOD:
             match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
             # verify if we have a valid buffer_id, if yes avoid to send both
-            # flow_mod & packet_out
+            # flow_mod & pa enumerate(cket_out
             if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(datapath, 100, match, actions, msg.buffer_id)
+                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
                 return
             else:
-                self.add_flow(datapath, 100, match, actions)
+                self.add_flow(datapath, 1, match, actions)
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
@@ -166,9 +171,91 @@ class SimpleSwitch13(app_manager.RyuApp):
         out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
-        
-        
-        
+
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def port_stats_reply_handler(self, ev):
+           datapath = ev.msg.datapath
+           ofp_parser = datapath.ofproto_parser
+           ofproto = datapath.ofproto
+           dpid = datapath.id
+           l = [257,260]
+           last_item = 32
+           if dpid in l:
+              last_item = 31
+           for stat in ev.msg.body:
+            if stat.port_no in range(2,last_item):
+                self.prevalueSPkt.setdefault((dpid,stat.port_no), 0)
+                self.prevalueRPkt.setdefault((dpid,stat.port_no), 0)
+                Diffsend = stat.tx_packets - self.prevalueSPkt[dpid,stat.port_no]
+                Diffrecive = stat.rx_packets - self.prevalueRPkt[dpid,stat.port_no]
+                if Diffsend > Threshold:
+                   for item in self.Hostinfo:
+                     if dpid in item and stat.port_no in item:
+                        Key = self.Diffie_Hellman(item[1])
+                        match = ofp_parser.OFPMatch(eth_src = item[1], in_port = stat.port_no)
+                        mod = ofp_parser.OFPFlowMod(datapath=datapath, priority=1,
+                                 command=ofproto.OFPFC_DELETE,
+                                 match=match)
+                        datapath.send_msg(mod)
+                        self.logger.info("Delete the flow entries which match port: %d and src: %d"%(stat.port_no,item[1]))
+                        return 
+                   (dpid, src, ip_src, in_port) in self.Hostinfo
+                if Diffsend > Gratest: 
+
+    def send_port_stats_request(self):
+          for dpid in self.Edgeswitch:
+               datapath = self.Data_Path[dpid]
+               #Currently not waiting for switch to respond to previous request
+               ofp = datapath.ofproto
+               ofp_parser = datapath.ofproto_parser
+
+            # ofp.OFPP_ANY sends request for all ports
+               req = ofp_parser.OFPPortStatsRequest(datapath , 0, ofp.OFPP_ANY)
+               datapath.send_msg(req)
+               #print "states request of switch %d sent", dpid
+
+    def send_flow_stats_request(self, item):
+       datapath = self.Data_Path[item[0]]
+       ofp = datapath.ofproto
+       ofp_parser = datapath.ofproto_parser
+
+       cookie = cookie_mask = 0
+       match = ofp_parser.OFPMatch(in_port=in_port, eth_src=item[2])
+       req = ofp_parser.OFPFlowStatsRequest(datapath, 0,ofp.OFPTT_ALL,ofp.OFPP_ANY, ofp.OFPG_ANY,cookie, cookie_mask,match)
+       datapath.send_msg(req) 
+
+    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
+    def flow_stats_reply_handler(self, ev):
+      datapath = ev.msg.datapath
+      dpid = datapath.id
+      for stat in ev.msg.body:
+        if stat.packet_count > 0 :    
+           src = stat.match['eth_src']
+           in_port = stat.match['in_port']
+           for item in self.newlocation:
+             if src in item and in_port in item:
+                self.newlocation.remove(item)
+                for index, anitem in enumerate(self.Hostinf):
+                  if src in anitem and in_port in anitem and dpid in anitem:
+                         ip_src = self.Hostinf[index][2]
+                         self.Hostinf[index]= (dpid, src, ip_src, in_port)
+                         print ip_src,"changed his location to", dpid, in_port
+
+    def Diffie_Hellman(self, src):
+        G = 15
+        p = 21841
+        a = randint(0,10000)
+        Public_Key = G**a % p
+        self.Keys[src] = (public_Key, None)# sending Msg to src with a public Key
+        for i in range(1,30):
+          t_end = time.time() + 1
+          while time.time() < t_end:
+             pass
+          if self.Key[src][1] != None:
+                 Private_key = self.Key[src][1]**a % p
+                 return Private_key
+        return 0
+                 
 
 class ThreadingExample(SimpleSwitch13):
     """ Threading example class
@@ -183,6 +270,21 @@ class ThreadingExample(SimpleSwitch13):
         thread.daemon = True                            # Daemonize thread
         thread.start()
 
+    def Checkthenewlocation(self):
+       while True:
+          time.sleep(3)
+          if len(self.newlocation) > 0:
+            for item in self.newlocation:
+               self.send_flow_stats_request(item)
+          else:
+            print "No host changed his posation"
+            
+
+    def monitor_port(self):
+          time.sleep(30)
+          while True:
+               self.send_port_stats_request()
+               time.sleep(3)
 
     def foo(self):
             #buffer_id = 4294967295
@@ -199,29 +301,36 @@ class ThreadingExample(SimpleSwitch13):
                   rdata = pickle.loads(c.recv(1024))
                   if not rdata:
                       break
-                  print 'the pakt is:', rdata
+                  #print 'New user', rdata
                   #c.send('Thank you for connecting')
-                  ip_src = rdata[0]
-                  in_port = rdata[1]
-                  dpid = rdata[2]
-                  src = rdata[3]
-                  dst = rdata[4]
+                  dpid = rdata[0]
+                  src = rdata[1]
+                  dst = rdata[2]
+                  in_port = rdata[3]#MacAddress
+                  ip_src = rdata[4]
                   buffer_id = rdata[5]
                   msg_data = rdata[6]
+                  if rdata[7]:
+                     mpls = rdata[7]
                   datapath = self.Data_Path[dpid]
-                  if src in self.Hostinfo.keys():
-                      pass
-                  elif len(self.Hostinfo) >= self.Hostnumber :
+
+                  if not mpls:
+                    if (dpid, src, ip_src, in_port) in self.Hostinfo:
+                       pass
+                    elif len(self.Hostinfo) >= self.Hostnumber :
                       print "BLOCK"
                       self.logger.info("packet in Socket %s %s %s %s", dpid, src, dst, in_port)
                       actions = []
                       match = parser.OFPMatch(in_port=in_port)
-                      self.add_flow(datapath, 100, match, in_port , actions)#should be 1000
+                      self.add_flow(datapath, 10, match, in_port , actions)
                       return
-                  else:
+                    else:
                       print "new item"
-                      self.Hostinfo[src] = (ip_src,in_port,dpid)
-                  
+                      self.Hostinfo.append((dpid, src, ip_src, in_port))
+                  else:
+                    Key = self.Diffie_Hellman(src)
+                    self.newlocation.append((dpid, src, ip_src, in_port))
+
                   self.mac_to_port[dpid][src] = in_port
 
                   if dst in self.mac_to_port[dpid]:
@@ -233,14 +342,17 @@ class ThreadingExample(SimpleSwitch13):
 
                   # install a flow to avoid packet_in next time
                   if out_port != ofproto.OFPP_FLOOD:
-                    match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
+                    if key:
+                         match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src, eth_type=0x8847,mpls_label=key)
+                    else:
+                         match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src)
                    # verify if we have a valid buffer_id, if yes avoid to send both
                     # flow_mod & packet_out
                     if buffer_id != ofproto.OFP_NO_BUFFER:
-                      self.add_flow(datapath, 100, match, actions, buffer_id)
+                      self.add_flow(datapath, 1, match, actions, buffer_id)
                       return
                     else:
-                      self.add_flow(datapath, 100, match, actions)
+                      self.add_flow(datapath, 1, match, actions)
                   data = None
                   if buffer_id == ofproto.OFP_NO_BUFFER:
                      data = msg_data
