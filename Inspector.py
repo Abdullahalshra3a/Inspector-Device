@@ -23,13 +23,13 @@ from ryu.lib.packet import ethernet, ipv4, ipv6 , arp, icmp
 from ryu.lib.packet import ether_types
 from ryu.lib.packet import tcp
 import pickle, threading
-import socket
+import socket    
 
 
 class SimpleSwitch13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     Hostnumber = 123
-    Hostinfo ={}
+    Hostinfo =[]
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch13, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
@@ -94,28 +94,35 @@ class SimpleSwitch13(app_manager.RyuApp):
             return
         dst = eth.dst
         src = eth.src
-
+        mpls = False
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
 
         self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
         
-        if ip:
-          if src in self.Hostinfo.keys():
-               Tuple = (ip.src,in_port,dpid, src,dst,msg.buffer_id, msg.data)
-               y = pickle.dumps(Tuple)
-               self.sendToC1(y)
+        if ip: 
+          if (dpid, src, ip.src, in_port) in self.Hostinfo:
+               return              
           elif len(self.Hostinfo) >= self.Hostnumber :
-            print "BLOCK"
-            self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
-            actions = []
-            match = parser.OFPMatch(in_port=in_port)
-            self.add_flow(datapath, 100, match, in_port , actions)#should be 1000
-            return
+             for item in self.Hostinfo :
+                if ip.src in item and src in item:
+                  mpls = True
+                  Tuple = (dpid, src, dst, in_port, ip.src, msg.buffer_id, msg.data, mpls)
+                  y = pickle.dumps(Tuple)
+                  self.sendToC1(y)
+                  print iP.src, "changed its location from", item[0],item[3], "To", dpid, in_port)
+                  break
+             if mpls == False:
+                  self.logger.info(" BLOCK %s %s %s %s", dpid, src, dst, in_port)
+                  Tuple = (dpid, src, dst, in_port, ip.src, msg.buffer_id, msg.data, mpls)
+                  y = pickle.dumps(Tuple)
+                  self.sendToC1(y)
+                  print iP.src, "changed its location from", item[0],item[3], "To", dpid, in_port)
+                  return
           else:
             print "new item"
-            self.Hostinfo[src] = (ip.src,in_port,dpid)
-            Tuple = (ip.src,in_port,dpid, src,dst,msg.buffer_id, msg.data)
+            self.Hostinfo.append((dpid, src, ip.src, in_port))
+            Tuple = (dpid, src, dst, in_port, ip.src, msg.buffer_id, msg.data)
             y = pickle.dumps(Tuple)
             self.sendToC1(y)
 
