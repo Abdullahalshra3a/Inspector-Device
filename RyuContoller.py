@@ -24,7 +24,7 @@ from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet, ipv4, ipv6 , arp, icmp
 from ryu.lib.packet import ether_types
 from ryu.lib.packet import tcp
-import pickle, threading
+import pickle, threading , Inspector
 import socket
 from random import randint
 import time
@@ -32,7 +32,6 @@ import time
 class SimpleSwitch13(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     Hostnumber = 123
-    Hostinfo =[]
     Data_Path = {}
     Flowcounter = {}
     Edgeswitch = [257,258,259,260]
@@ -41,6 +40,7 @@ class SimpleSwitch13(app_manager.RyuApp):
     newlocation =[]
     prevalueSPkt={}
     prevalueRPkt={}
+    Threshold = counter = Gratest = 0
     def __init__(self, *args, **kwargs):
         super(SimpleSwitch13, self).__init__(*args, **kwargs)
         #self.mac_to_port = {}
@@ -117,7 +117,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         # learn a mac address to avoid FLOOD next time.
         
         if ip and dpid in self.Edgeswitch:
-          if (dpid, src, ip.src, in_port) in self.Hostinfo:
+          if (dpid, src, ip.src, in_port) in Inspector.Hostinfo:
               print ip.src ,"is an authenticated user and its location", dpid,in_port
           else:
              print "Unauthenticated user"
@@ -184,24 +184,36 @@ class SimpleSwitch13(app_manager.RyuApp):
               last_item = 31
            for stat in ev.msg.body:
             if stat.port_no in range(2,last_item):
+                self.counter = +1
                 self.prevalueSPkt.setdefault((dpid,stat.port_no), 0)
-                self.prevalueRPkt.setdefault((dpid,stat.port_no), 0)
+                #self.prevalueRPkt.setdefault((dpid,stat.port_no), 0)
                 Diffsend = stat.tx_packets - self.prevalueSPkt[dpid,stat.port_no]
-                Diffrecive = stat.rx_packets - self.prevalueRPkt[dpid,stat.port_no]
-                if Diffsend > Threshold:
-                   for item in self.Hostinfo:
+                #Diffrecive = stat.rx_packets - self.prevalueRPkt[dpid,stat.port_no] #we could use this part to slow attack
+                #if Diffrecive > self.Threshold:
+                #   self.Slow_attack()
+                if Diffsend > self.Threshold:
+                   for item in Inspector.Hostinfo:
                      if dpid in item and stat.port_no in item:
-                        Key = self.Diffie_Hellman(item[1])
+                        key = self.Diffie_Hellman(item[1])
                         match = ofp_parser.OFPMatch(eth_src = item[1], in_port = stat.port_no)
-                        mod = ofp_parser.OFPFlowMod(datapath=datapath, priority=1,
-                                 command=ofproto.OFPFC_DELETE,
-                                 match=match)
+                        mod = ofp_parser.OFPFlowMod(datapath=datapath, priority=1,command=ofproto.OFPFC_DELETE,match=match)
                         datapath.send_msg(mod)
-                        self.logger.info("Delete the flow entries which match port: %d and src: %d"%(stat.port_no,item[1]))
-                        return 
-                   (dpid, src, ip_src, in_port) in self.Hostinfo
-                if Diffsend > Gratest: 
+                        self.logger.info("Delete the flow entries which match port: %d and src: %d", stat.port_no,item[1])
+                        #return 
+                elif Diffsend > Gratest:
+                     self.Gratest = Diffsend
+                else:
+                   pass
+           
+             if counter >= self.Hostnumber:
+                 if self.Threshold == 0:
+                   self.Threshold = self.Gratest
+                 else:
+                   self.Threshold = self.Threshold * 0.95 + self.Gratest * 0.5
+                   self.counter = self.Gratest = 0
+                 
 
+ 
     def send_port_stats_request(self):
           for dpid in self.Edgeswitch:
                datapath = self.Data_Path[dpid]
@@ -310,26 +322,21 @@ class ThreadingExample(SimpleSwitch13):
                   ip_src = rdata[4]
                   buffer_id = rdata[5]
                   msg_data = rdata[6]
-                  if rdata[7]:
-                     mpls = rdata[7]
+             
                   datapath = self.Data_Path[dpid]
 
-                  if not mpls:
-                    if (dpid, src, ip_src, in_port) in self.Hostinfo:
-                       pass
-                    elif len(self.Hostinfo) >= self.Hostnumber :
-                      print "BLOCK"
-                      self.logger.info("packet in Socket %s %s %s %s", dpid, src, dst, in_port)
-                      actions = []
-                      match = parser.OFPMatch(in_port=in_port)
-                      self.add_flow(datapath, 10, match, in_port , actions)
-                      return
-                    else:
-                      print "new item"
-                      self.Hostinfo.append((dpid, src, ip_src, in_port))
-                  else:
+                  if len(rdata) < 8:
+                    #if (dpid, src, ip_src, in_port) in Inspector.Hostinfo:
+                       pass # to Install an entry                 
+                  elif rdata[7] == True:
                     Key = self.Diffie_Hellman(src)
                     self.newlocation.append((dpid, src, ip_src, in_port))
+                  else:
+                    self.logger.info("BLOCK %s %s %s %s", dpid, src, dst, in_port)
+                    actions = []
+                    match = parser.OFPMatch(in_port=in_port)
+                    self.add_flow(datapath, 10, match, in_port , actions)#should be 1000
+                    return
 
                   self.mac_to_port[dpid][src] = in_port
 
