@@ -26,33 +26,17 @@ import pickle, threading
 import socket    
 
 
-class SimpleSwitch13(app_manager.RyuApp):
+
+class inspector(app_manager.RyuApp):
+
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     Hostnumber = 123
-    Hostinfo =[]
-    def __init__(self, *args, **kwargs):
-        super(SimpleSwitch13, self).__init__(*args, **kwargs)
-        self.mac_to_port = {}
+    Hostinfo = []
 
-    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
-    def switch_features_handler(self, ev):
-        datapath = ev.msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        # install table-miss flow entry
-        #
-        # We specify NO BUFFER to max_len of the output action due to
-        # OVS bug. At this moment, if we specify a lesser number, e.g.,
-        # 128, OVS will send Packet-In with invalid buffer_id and
-        # truncated packet data. In that case, we cannot output packets
-        # correctly.  The bug has been fixed in OVS v2.1.0.
-        match = parser.OFPMatch()
-        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
-                                          ofproto.OFPCML_NO_BUFFER)]
-        self.add_flow(datapath, 0, match, actions)
-        #match = parser.OFPMatch(eth_type=0x8847,mpls_label=100)
-        #actions = []
-        #self.add_flow(datapath, 10, match, actions)
+    def __init__(self, *args, **kwargs):
+        super(inspector, self).__init__(*args, **kwargs)
+        self.mac_to_port = {}
+        
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
@@ -70,9 +54,9 @@ class SimpleSwitch13(app_manager.RyuApp):
         datapath.send_msg(mod)
    
 
-    
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
+
         # If you hit this you might want to increase
         # the "miss_send_length" of your switch
         if ev.msg.msg_len < ev.msg.total_len:
@@ -87,20 +71,24 @@ class SimpleSwitch13(app_manager.RyuApp):
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
         pkt_tcp = pkt.get_protocol(tcp.tcp)
+        ip = mpls = False
         ip = pkt.get_protocol(ipv4.ipv4)
 
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            # ignore lldp packet
+            # ignorHostinfo.appende lldp packet
             return
         dst = eth.dst
-        src = eth.src
-        mpls = False
+        src = eth.src       
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
-
-        self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
         
-        if ip: 
+
+        l = [257,260]
+        last_item = 32
+        if dpid in l:
+           last_item = 31
+        print pkt  
+        if ip and in_port in range(2,last_item + 1):
           if (dpid, src, ip.src, in_port) in self.Hostinfo:
                return              
           elif len(self.Hostinfo) >= self.Hostnumber :
@@ -110,21 +98,25 @@ class SimpleSwitch13(app_manager.RyuApp):
                   Tuple = (dpid, src, dst, in_port, ip.src, msg.buffer_id, msg.data, mpls)
                   y = pickle.dumps(Tuple)
                   self.sendToC1(y)
-                  print iP.src, "changed its location from", item[0],item[3], "To", dpid, in_port)
-                  break
+                  print ip.src, "changed its location from", item[0],item[3], "To", dpid, in_port
+                  return
              if mpls == False:
                   self.logger.info(" BLOCK %s %s %s %s", dpid, src, dst, in_port)
                   Tuple = (dpid, src, dst, in_port, ip.src, msg.buffer_id, msg.data, mpls)
                   y = pickle.dumps(Tuple)
                   self.sendToC1(y)
-                  print iP.src, "changed its location from", item[0],item[3], "To", dpid, in_port)
+                  print ip.src, "changed its location from", item[0],item[3], "To", dpid, in_port
                   return
           else:
-            print "new item"
+            print "new item", len(self.Hostinfo)
             self.Hostinfo.append((dpid, src, ip.src, in_port))
+            print self.Hostinfo
             Tuple = (dpid, src, dst, in_port, ip.src, msg.buffer_id, msg.data)
             y = pickle.dumps(Tuple)
             self.sendToC1(y)
+            self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
+        else:
+                  print "Hello"
 
     
 
