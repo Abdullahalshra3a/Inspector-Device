@@ -87,7 +87,7 @@ class inspector(app_manager.RyuApp):
         last_item = 32
         if dpid in l:
            last_item = 31
-        print pkt  
+ 
         if ip and in_port in range(2,last_item + 1):
           if (dpid, src, ip.src, in_port) in self.Hostinfo:
                return              
@@ -115,10 +115,6 @@ class inspector(app_manager.RyuApp):
             y = pickle.dumps(Tuple)
             self.sendToC1(y)
             self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
-        else:
-                  print "Hello"
-
-    
 
         
     def sendToC1(self, y):
