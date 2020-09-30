@@ -82,7 +82,7 @@ class SimpleSwitch13(app_manager.RyuApp):
 
 
 
-    def add_flow(self, datapath, priority, match, actions, buffer_id=None, table_id=1, idle_timeout=50, hard_timeout=50):
+    def add_flow(self, datapath, priority, match, actions, buffer_id=None, table_id=1, idle_timeout=120, hard_timeout=120):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
@@ -134,8 +134,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         #   print "pak:", pkt_tcp.seq
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
-        priority = 1
-        table_id = 1
+
         #self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
         #print self.mac_to_port.keys()
         # learn a mac address to avoid FLOOD next time.
@@ -143,7 +142,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         self.Key.setdefault(src, (None,None)) 
         if self.Key[src][1] != None:
             Private_key = self.Key[src][1]**a % p
-
+        table_id = 1
         l = [257,260]
         last_item = 32
         if dpid in l:
@@ -170,10 +169,12 @@ class SimpleSwitch13(app_manager.RyuApp):
                       datapath.send_msg(mod)
                       return
             print ip.src ,"is an authenticated user and its location", dpid,in_port
+        elif dpid in self.Edgeswitch:
+            self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
+            table_id = 1
         else:
             self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
             table_id = 0
-     
 
         self.mac_to_port[dpid][src] = in_port
 
@@ -183,7 +184,7 @@ class SimpleSwitch13(app_manager.RyuApp):
             out_port = ofproto.OFPP_FLOOD
 
         actions = [parser.OFPActionOutput(out_port)]
-        
+        priority = 1
         # install a flow to avoid packet_in next time
         if out_port != ofproto.OFPP_FLOOD:
             if Private_key and dpid in self.Edgeswitch:
@@ -196,10 +197,10 @@ class SimpleSwitch13(app_manager.RyuApp):
             # verify if we have a valid buffer_id, if yes avoid to send both
             # flow_mod & pa enumerate(cket_out
             if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(datapath, priority, match, actions, msg.buffer_id, table_id = table_id)
+                self.add_flow(datapath, priority, match, actions, msg.buffer_id, table_id = table_id )
                 return
             else:
-                self.add_flow(datapath, priority, match, actions, table_id = table_id)
+                self.add_flow(datapath, priority, match, actions, table_id = table_id )
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
