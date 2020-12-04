@@ -47,11 +47,12 @@ class SimpleSwitch13(app_manager.RyuApp):
     prevaluetcp = {}
     prevalueRPkt={}
     SlowAttack = False
-    Trainingtime = 60
-    Threshold_tx = 0
-    Threshold_rx = 0
-    Threshold_tcp = 0
+    Trainingtime = 90
+    Threshold_tx = 150
+    Threshold_rx = 150
+    Threshold_tcp = 10
     counter = 0
+    tcpcounter = 0
     Gratest_tcp = 0
     Gratest_rx =0
     Gratest_tx = 0
@@ -103,8 +104,7 @@ class SimpleSwitch13(app_manager.RyuApp):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
-                                             actions)]
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,actions)]
         if buffer_id:
             mod = parser.OFPFlowMod(datapath=datapath, buffer_id=buffer_id,idle_timeout=idle_timeout, hard_timeout=hard_timeout,
                                     priority=priority,table_id=table_id, match=match,instructions=inst)
@@ -156,7 +156,15 @@ class SimpleSwitch13(app_manager.RyuApp):
         table_id = 1
         #l = [257,260]
         last_item = 4 # we have to assign the correct user ports
-        #last_item = 4 if dpid in l else 33
+        self.mac_to_port[dpid][src] = in_port
+
+        if dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][dst]
+        else:
+            out_port = ofproto.OFPP_FLOOD
+
+        actions = [parser.OFPActionOutput(out_port)]
+        priority = 1              
         if ip and dpid in self.Edgeswitch and in_port in range(2,last_item + 1):
             if (dpid, src, ip.src, in_port) in self.Hostinfo:
               if src in self.Key.keys():
@@ -165,20 +173,23 @@ class SimpleSwitch13(app_manager.RyuApp):
                  dictionary = ast.literal_eval(contents)
                  file.close()
                  self.Key = dictionary                                                  
-                 if self.Key[src][1]!= 0:                
+                 if self.Key[src][1]!= 0:# I have to waite the user answer                
                    t = self.Key[src]
                    lst = list(t)
                    lst[3] = lst[1]**lst[2] % 21841 #private key
                    t = tuple(lst)
                    self.Key[src] = t
-                   Private_key = lst[3]                                                     
+                   Private_key = lst[3]
+                 else:
+                   return                                                     
               print ip.src ,"is an authenticated user and its location", dpid,in_port
             else:
                return
             if msg.table_id == 0 and pkt_tcp.bits == 2:
                if Private_key != 0 :
                       match = parser.OFPMatch(in_port=in_port, eth_src = src,  eth_type=0x8847,mpls_label=Private_key)
-                      inst = [parser.OFPActionPopMpls(), parser.OFPInstructionGotoTable(1)]
+                      actions = [parser.OFPActionPopMpls(), parser.OFPActionOutput(out_port)]
+                      inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
                       mod = parser.OFPFlowMod(datapath=datapath, table_id=0, priority=10, match = match, instructions=inst)
                       datapath.send_msg(mod)
                       self.Flowcounter[dpid] += 1
@@ -188,7 +199,8 @@ class SimpleSwitch13(app_manager.RyuApp):
                       return
                else:
                       match = parser.OFPMatch(in_port =in_port, eth_type=0x0800, ip_proto=6, tcp_flags=2)
-                      inst = [parser.OFPInstructionGotoTable(1)]
+                      actions = [parser.OFPActionOutput(out_port)]
+                      inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
                       mod = parser.OFPFlowMod(datapath=datapath, table_id=0, priority=10, match = match, instructions=inst)
                       datapath.send_msg(mod)
                       self.Flowcounter[dpid] += 1
@@ -201,16 +213,7 @@ class SimpleSwitch13(app_manager.RyuApp):
             self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
             table_id = 0
         
-        self.mac_to_port[dpid][src] = in_port
-
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
-
-        actions = [parser.OFPActionOutput(out_port)]
-        priority = 1
-               
+        
         # install a flow to avoid packet_in next time
         if out_port != ofproto.OFPP_FLOOD:            
             if Private_key != 0 and dpid in self.Edgeswitch:
@@ -271,16 +274,19 @@ class SimpleSwitch13(app_manager.RyuApp):
                         datapath.send_msg(req)
                         break
                     """
-                if Diffrecive > self.Threshold_rx and (time.time() - self.start_time) > self.Trainingtime :
+                if Diffrecive > round(self.Threshold_rx * 2) + 250 and (time.time() - self.start_time) > self.Trainingtime :
                    for item in self.Hostinfo:
                      if dpid in item and stat.port_no in item:
-                        if item[1] in self.Key.keys():
-                           if self.Key[item[1]][3]!=0:
+                        src = item[1]
+                        if src in self.Key.keys():
+                           #if self.Key[src][3]!=0:
+                              #print src,"self.Key[src][3]", self.Key[src]
                               break
-                        match = ofp_parser.OFPMatch(eth_src = item[1], in_port = stat.port_no)
+                        match = ofp_parser.OFPMatch(eth_src = src, in_port = stat.port_no)
                         mod = ofp_parser.OFPFlowMod(datapath=datapath, table_id=1, priority=1, command=ofproto.OFPFC_DELETE, out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY, match=match)
                         datapath.send_msg(mod)
-                        print "Delete the flow entries which match in_port: %d and src: %s", stat.port_no,item[1]
+                        print Diffrecive , round(self.Threshold_rx * 2) + 50
+                        print "Delete the flow entries which match in_port: %d and src: %s"%(stat.port_no,item[1])
                         self.Diffie_Hellman(item[1])#exchange Public keys                                               
                         break 
     
@@ -289,23 +295,16 @@ class SimpleSwitch13(app_manager.RyuApp):
                 if Diffrecive > self.Gratest_rx:
                      self.Gratest_rx = Diffsend
 
-           if self.counter >= self.Hostnumber and (time.time() - self.start_time) > 10:
-                 
-                 if self.Threshold_tx == 0:
-                   self.Threshold_tx = self.Gratest_tx * 2
-                 else:
-                   self.Threshold_tx = int((self.Threshold_tx * 0.95) + (self.Gratest_tx * 0.05)) 
+           if self.counter >= self.Hostnumber and (time.time() - self.start_time) > 10:                 
+                   self.Threshold_tx = (self.Threshold_tx * 0.95) + (self.Gratest_tx * 0.05) 
 
-                 if self.Threshold_rx == 0:
-                   self.Threshold_rx = self.Gratest_rx * 2
-                 else:
-                   self.Threshold_rx = int((self.Threshold_rx * 0.95) + (self.Gratest_rx * 0.05))  
-                 self.Gratest_tx = 0
-                 self.Gratest_rx = 0
-                 self.counter = 0
-                 file = open ('Y.txt', 'a')
-                 file.write(str(self.Threshold_rx))
-                 file.close 
+                   self.Threshold_rx = (self.Threshold_rx * 0.95) + (self.Gratest_rx * 0.05)  
+                   self.Gratest_tx = 50
+                   self.Gratest_rx = 50
+                   self.counter = 0
+                   file = open ('Y.txt', 'a')
+                   file.write(str(self.Threshold_rx))
+                   file.close 
     def send_port_stats_request(self):
 
           for dpid in self.Edgeswitch:
@@ -335,35 +334,35 @@ class SimpleSwitch13(app_manager.RyuApp):
       datapath = ev.msg.datapath
       dpid = datapath.id
       ofp_parser = datapath.ofproto_parser
-      ofp = datapath.ofproto 
-      for stat in ev.msg.body:
+      ofp = datapath.ofproto
+
+      for stat in ev.msg.body:        
         if stat.table_id == 0:#SYN_Attack 
           if stat.priority == 10:
-            self.prevaluetcp.setdefault(stat.match, 0)
-            Difftcp = stat.packet_count - self.prevaluetcp[stat.match]
-            self.prevaluetcp[stat.match] = stat.packet_count
-            if Difftcp > self.Threshold_tcp and (time.time() - self.start_time) > self.Trainingtime:
-              in_port = stat.match['in_port']
+            in_port = stat.match['in_port']
+            self.prevaluetcp.setdefault((dpid , in_port), 0)
+            Difftcp = stat.packet_count - self.prevaluetcp[dpid , in_port]
+            self.prevaluetcp[dpid , in_port] = stat.packet_count
+            if Difftcp > round(self.Threshold_tcp * 2) + 15 and (time.time() - self.start_time) > self.Trainingtime:             
+              for i in range(50):
+                      print "attack", self.Threshold_tcp, Difftcp, self.Gratest_tcp 
               for item in self.Hostinfo:
                 if dpid in item and in_port in item:
                    src = item[1]
-                   break
-              self.Diffie_Hellman(src)
-              match = ofp_parser.OFPMatch(in_port = in_port)
-              mod = ofp_parser.OFPFlowMod(datapath=datapath, priority=10,command=ofproto.OFPFC_DELETE,table_id=0,match=match)
-              datapath.send_msg(mod)
+                   if src in self.Key.keys():
+                      break
+                   
+                   self.Diffie_Hellman(src)
+                   print "SYN ATTACK Delete the flow entries which match in_port: %d and src: %s" %(in_port,item[1]) 
+                   match = ofp_parser.OFPMatch(in_port = in_port)
+                   mod = ofp_parser.OFPFlowMod(datapath=datapath, table_id=0, priority=10,command=ofproto.OFPFC_DELETE,out_port=ofproto.OFPP_ANY, out_group=ofproto.OFPG_ANY,match=match)
+                   datapath.send_msg(mod)
             else:
                  if Difftcp > self.Gratest_tcp:
                      self.Gratest_tcp = Difftcp
-            if stat == ev.msg.body[-1]:
-               if self.Threshold_tcp == 0:
-                   self.Threshold_tcp = self.Gratest_tcp * 2
-               else:
-                   self.Threshold_tcp= int((self.Threshold_tcp * 0.95) + (self.Gratest_tcp * 0.05)) 
-               self.Gratest_tcp = 0
-               file = open ('x.txt', 'a')
-               file.write(str(self.Threshold_tcp))
-               file.close
+
+
+
         elif len(self.newlocation) > 0:
           if stat.priority > 0:
             src = stat.match['eth_src']
@@ -407,7 +406,19 @@ class SimpleSwitch13(app_manager.RyuApp):
                           #break
                   self.Slow_attack = None
                   self.A.clear()
-         
+        """
+        if stat == ev.msg.body[-1]:
+            self.tcpcounter+=1
+            if self.tcpcounter >= len(self.Edgeswitch):
+                   self.Threshold_tcp = (self.Threshold_tcp * 0.95) + (self.Gratest_tcp * 0.05)
+                   print "self.Threshold_tcp", round(self.Threshold_tcp *2) + 15 , self.tcpcounter, self.Gratest_tcp   
+                   self.Gratest_tcp = 3
+                   file = open ('x.txt', 'a')
+                   file.write(str(self.Threshold_tcp))
+                   file.close
+                   self.tcpcounter = 0
+
+      """
       if self.Slow_attack != None: 
          time.sleep(1)
          cookie = cookie_mask = 0
@@ -415,7 +426,7 @@ class SimpleSwitch13(app_manager.RyuApp):
          table_id=1
          req = ofp_parser.OFPFlowStatsRequest(datapath, 0,ofp.OFPTT_ALL,ofp.OFPP_ANY, ofp.OFPG_ANY,cookie, cookie_mask,match, table_id)
          datapath.send_msg(req)
-         """
+      """
  
               
     def Diffie_Hellman(self, src):
@@ -531,10 +542,10 @@ class ThreadingExample(SimpleSwitch13):
                     time.sleep(1)
                   else:
                     print rdata[7]
-                    print "BLOCK %s %s %s %s", dpid, src, dst, in_port
+                    print "BLOCK %s %s %s %s" %(dpid, src, dst, in_port)
                     actions =[]
                     match = parser.OFPMatch(in_port=in_port)
-                    self.add_flow(datapath, 10, match, in_port , actions)
+                    self.add_flow(datapath, 5, match, actions, table_id = 1)
                     return
                   Private_key = 0
                   if src in self.Key.keys():                 
