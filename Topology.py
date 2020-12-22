@@ -10,12 +10,14 @@ import time, datetime
 import os, psutil
 import threading
 from mininet.topo import Topo
+from scapy.all import *
+from pipes import quote
 
 Pkt_number = 0
 FPkt_number = 0
 def emptyNet():
    os.system('sudo mn -c')
-   HostNumber = 12
+   HostNumber = 122
    net = Mininet(controller=RemoteController,  switch=OVSKernelSwitch)
    c1 = net.addController('c1', controller=RemoteController, ip="127.0.0.1")
    c2 = net.addController('c2', controller=RemoteController, ip="127.0.0.2")
@@ -40,8 +42,6 @@ def emptyNet():
    
    server = [0]*1
    server[0] = net.addHost('server', ip='10.0.0.199', mac='00:00:00:00:01:99')
-   print server
-   #time.sleep(10)
    switch = [0]*11 
    for i in range(1,12):
       # x = i + 1
@@ -71,20 +71,20 @@ def emptyNet():
    net.addLink(switch[9], switch[10], **linkopts)
    
 
-
+   
    print 'bulding links between hosts and edge switches.'
    for i in range(0,4):
       if i == 0:
-         for x in range(0,3):
+         for x in range(0,30):
                net.addLink(switch[i], host[x], **ingresslinks)
       elif i == 1:
-         for x in range(3,6):
+         for x in range(30,60):
                net.addLink(switch[i], host[x], **ingresslinks)
       elif i == 2:
-         for x in range(6,9):
+         for x in range(60,90):
                net.addLink(switch[i], host[x], **ingresslinks)
       elif i == 3:
-         for x in range(9,12):
+         for x in range(90,122):
                net.addLink(switch[i], host[x], **ingresslinks)
       else:
           pass     
@@ -105,21 +105,23 @@ def emptyNet():
    #net.start()
    enableSTP()
    net.staticArp()
-   
+   info( '*** Starting the simulation in 10 Seconds ***\n')
+   info( '*** Run the ryu Controller now ***\n')
+   time.sleep(30)
    info( '\n*** Starting web server ***\n')
    server = net.get('server')
    #os.system('sudo tcpdump -i lo -w ryu-local.cap &')
-   os.system('sudo tcpdump -i any tcp -w TCP.pcap &')
-   server.cmdPrint('python -m SimpleHTTPServer 80 &')
-   server.cmd('sudo tcpdump -i server-eth0 port 80 -w server.pcap &')
-   info( '*** Starting the simulation in 10 Seconds ***\n')
-   info( '*** Run the ryu Controller now ***\n')
-
-   time.sleep(30)
-   net.pingAll()
-   #for i in range(1,HostNumber +1):
-     #client=net.get('h%s'%str(i))
-     #client.cmdPrint('sudo ping -c 1 10.0.0.199')
+   #os.system('sudo tcpdump -i any tcp -w TCP.pcap &')
+   #server.cmdPrint('python -m SimpleHTTPServer 80 &')
+   server.cmdPrint('iperf -s -p 80 -i 3 > server.text &')
+   
+   #net.pingAll()
+   out = 0
+   while out <= 1 :
+     for i in range(1, 123):
+      host = net.get('h%s' %str(i))
+      host.cmd('ping -c 1 10.0.0.199')
+     out+= 1
    
    t_end = time.time() + 1 
    while time.time() < t_end:
@@ -127,33 +129,62 @@ def emptyNet():
 
    finish_time = 0
    start_time = time.time()
-   while finish_time < 63:# Training time to gather the information       
-     for i in range(1,HostNumber +1):
+   while finish_time < 40:# Training time to gather the information
+     threads = []       
+     for i in range(121,HostNumber +1):
        t = threading.Thread(target= Training, args=(net,i,HostNumber,))
        t.setDaemon(True)
+       threads.append(t)
        t.start()
-
-     t_end = time.time() + 5 
-     while time.time() < t_end:
-             pass     
+     for th in threads:
+         th.join()
+     #time.sleep(0.5)
      finish_time = time.time() - start_time
+   for i in range(1,HostNumber +1):
+       t = threading.Thread(target= Training, args=(net,i,HostNumber,))
+       t.setDaemon(True)
+       threads.append(t)
+       t.start()
+   for th in threads:
+         th.join()
+     
 
+   #os.system('sudo tcpdump dst 10.0.0.199 -w TCP.pcap &')
+   last = 0.0
+   pkts = []
+   packets = []
    global Pkt_number
    global FPkt_number
-
-   while finish_time <203:# testing time to gather the information  
-     for i in range(1,HostNumber +1):
+   readpkt = rdpcap("/home/abdullah/Desktop/Dataset/TCP/1.pcap")
+   for H in range(1, 123):
+           host = net.get('h%s' %str(H))
+           host.cmdPrint('sudo tcpdump -i h%s-eth0 dst 10.0.0.199 -w h%s.pcap &' %(str(H),str(H)))
+   server.cmd('sudo tcpdump -i server-eth0 dst 10.0.0.199 -w server.pcap &')
+   for pkt in readpkt:
+       if pkt[TCP] and pkt[TCP].flags & 2 and pkt[IP].dst == "71.126.222.64" and not pkt[TCP].flags & 12:
+          packets.append(pkt) 
+   num = len(packets) / float(350)# 200 is the number of sent packets every attack round
+   avg = len(packets) / float(num)
+   threads = []       
+   while last < len(packets):
+    pkts = packets[int(last):int(last + avg)]
+    wrpcap("/home/abdullah/ryu/ryu/app/pkts.pcap", pkts)
+    for i in range(HostNumber, 0, -1):
        t = threading.Thread(target= Attack, args=(net,i,HostNumber,))
        t.setDaemon(True)
        t.start()
-     print "Attack"
-     time.sleep(1)          
-     finish_time = time.time() - start_time
+       if i < 121:
+         threads.append(t)       
+    for th in threads:
+         th.join()
+    last += avg
+    
+     
 
    print 'finish_time = ', finish_time 
    print "\nthe benign packt number", Pkt_number
    print "\n the malicious packt number", FPkt_number
-   
+      
    CLI( net )
    net.stop()
        
@@ -162,10 +193,12 @@ def Training(net,i, HostNumber):
       #dst = Mac(randint(1,HostNumber + 1)) use this for udp experiment
       dst = '00:00:00:00:01:99'# for TCP experiment
       src = Mac(i) 
-      Pktnumber = randint(1,5)# in TCP, this line acts number of the requestes 
+      #Pktnumber = randint(1,5)# in TCP, this line acts number of the requestes 
       #x = randint(1,HostNumber + 1)
+      req_number = randint(1,3)
+      data_pkt = randint(2, 5)
       client=net.get('h%s'%str(i))
-      client.cmdPrint('python /home/abdullah/ryu/ryu/app/TCPNormal.py %s %s %d &' %(src,dst,Pktnumber))         
+      client.cmd('python /home/abdullah/ryu/ryu/app/TCPNormal.py %s %s %d %d' %(src,dst, req_number, data_pkt ))         
  
 
 def Attack(net,i, HostNumber):
@@ -174,20 +207,24 @@ def Attack(net,i, HostNumber):
       #dst = Mac(randint(1,HostNumber + 1))
       dst = '00:00:00:00:01:99'# for TCP experiment
       src = Mac(i)             
-      if i == 11:
-               client=net.get('h%s'%str(i))
-               client.cmdPrint('hping3 10.0.0.199 -S -c 20 -i u1 --verbose -s 2235 -p 80 ')#--data 500
-               FPkt_number = FPkt_number + 150
+      if i < 121:
+        client=net.get('h%s'%str(i))
+        client.cmd('python /home/abdullah/ryu/ryu/app/SynAttack.py %s %s' %(src,dst))
+        FPkt_number = FPkt_number + 350
 
-               Pktnumber = randint(1,2) 
-               client=net.get('h%s'%str(i))
-               client.cmd('python /home/abdullah/ryu/ryu/app/TCPNormal.py %s %s %d &' %(src,dst,Pktnumber))
-               Pkt_number = Pkt_number + Pktnumber        
+        #req_number = randint(1,2)
+        #data_pkt = randint(2, 5)
+        #client=net.get('h%s'%str(i))
+        #client.cmd('python /home/abdullah/ryu/ryu/app/TCPNormal.py %s %s %d %d' %(src,dst, req_number, data_pkt ))
+        #Pkt_number = Pkt_number + (req_number * data_pkt)
+
       else:
-           Pktnumber = randint(1,2)            
+           req_number = randint(1,2)
+           data_pkt = randint(2, 15)            
            client=net.get('h%s'%str(i))
-           client.cmd('python /home/abdullah/ryu/ryu/app/TCPNormal.py %s %s %d &' %(src,dst,Pktnumber))
-           Pkt_number = Pkt_number + Pktnumber 
+           client.cmd('python /home/abdullah/ryu/ryu/app/TCPNormal.py %s %s %d %d' %(src,dst, req_number, data_pkt))
+           Pkt_number = Pkt_number + (req_number * data_pkt)
+           print FPkt_number ,10*" ",Pkt_number           
  
 def Mac(i):
     if i < 10 :
